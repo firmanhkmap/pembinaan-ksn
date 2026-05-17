@@ -3,97 +3,267 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebGIS Pembinaan KSN DKI Jakarta</title>
+    <title>WebGIS DKI Jakarta - KSN & Profil Risiko</title>
     
-    <!-- Panggil CSS Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body { margin: 0; padding: 0; }
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
         #map { width: 100%; height: 100vh; }
+        
+        /* Style untuk Kotak Filter Kota */
+        .filter-container {
+            position: absolute;
+            top: 20px;
+            left: 60px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+        .filter-container select {
+            padding: 5px 10px;
+            font-size: 14px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        
+        /* Style untuk Kotak Legenda */
+        .legend {
+            background: white;
+            padding: 10px;
+            line-height: 18px;
+            color: #333;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.8;
+        }
     </style>
 </head>
 <body>
 
-    <!-- Wadah untuk Peta -->
+    <div class="filter-container">
+        <label for="pilih-kota"><b>Pilih Kota/Kabupaten:</b> </label>
+        <select id="pilih-kota" onchange="filterPerKota(this.value)">
+            <option value="SEMUA">-- Tampilkan Semua --</option>
+            <option value="JAKARTA PUSAT">Jakarta Pusat</option>
+            <option value="JAKARTA UTARA">Jakarta Utara</option>
+            <option value="JAKARTA BARAT">Jakarta Barat</option>
+            <option value="JAKARTA SELATAN">Jakarta Selatan</option>
+            <option value="JAKARTA TIMUR">Jakarta Timur</option>
+            <option value="KEPULAUAN SERIBU">Kepulauan Seribu</option>
+        </select>
+    </div>
+
     <div id="map"></div>
 
-    <!-- Panggil Javascript Leaflet -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // 1. Inisialisasi Peta (Default fokus ke area Jakarta)
-        var map = L.map('map').setView([-6.2088, 106.8456], 11);
-
-        // 2. Tambahkan Basemap (OpenStreetMap)
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // ==========================================
+        // 1. DEFINISI BASEMAP
+        // ==========================================
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
+        });
+        var googleSatellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            attribution: '&copy; Google Maps'
+        });
+        var esriGray = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '&copy; Esri',
+            maxZoom: 16
+        });
 
-        // 3. Atur Gaya (Style) Poligon
-        // Gaya standar awal poligon
-        var styleDefault = {
-            fillColor: "#2ca25f",   // Warna isi poligon (Hijau)
-            fillOpacity: 0.5,       // Transparansi isi poligon
-            color: "#ffffff",       // Warna garis tepi pembatas (Putih)
-            weight: 1.5,            // Ketebalan garis tepi
-            opacity: 1              // Transparansi garis tepi
+        var map = L.map('map', {
+            center: [-6.2088, 106.8456],
+            zoom: 11,
+            layers: [osm]
+        });
+
+        // ==========================================
+        // 2. FUNGSI PEWARNAAN RIKO (SESUAI LEGENDA)
+        // ==========================================
+        function dapatkanWarnaRisiko(level) {
+            if (!level) return "#999999";
+            var lvl = level.toUpperCase();
+            if (lvl === "RISIKO SANGAT TINGGI" || lvl === "SANGAT TINGGI") return "#991414"; // Merah Tua
+            if (lvl === "RISIKO TINGGI" || lvl === "TINGGI") return "#d95f02";               // Orange
+            if (lvl === "RISIKO SEDANG" || lvl === "SEDANG") return "#00ff00";               // Hijau Cerah
+            if (lvl === "RISIKO RENDAH" || lvl === "RENDAH") return "#1f1fff";               // Biru
+            return "#999999";
+        }
+
+        // Style Garis Pembatas Kecamatan (Putus-putus)
+        var styleKecamatan = {
+            fillColor: "none",
+            color: "#4a4a4a",
+            weight: 1.5,
+            dashArray: "3, 5",
+            opacity: 0.7
         };
 
-        // Gaya ketika poligon diklik/terpilih oleh user
-        var styleTerpilih = {
-            fillColor: "#ff3333",   // Berubah jadi Merah cerah saat diklik
-            fillOpacity: 0.7,       // Sedikit lebih pekat
-            color: "#000000",       // Garis tepi berubah jadi Hitam
-            weight: 2.5             // Garis tepi jadi lebih tebal
+        // Style Standar KSN
+        var styleKSN = {
+            fillColor: "#e41a1c",
+            fillOpacity: 0.4,
+            color: "#333333",
+            weight: 1
         };
 
-        // Variabel penampung untuk menyimpan poligon mana yang sedang aktif diklik
-        var layerTerpilih;
+        // Simpan variabel layer utama agar bisa dimanipulasi secara global saat di-filter
+        var layerKecamatanRaw, layerRisikoRaw, layerKSNRaw;
+        var grupKecamatan = L.layerGroup().addTo(map);
+        var grupRisiko = L.layerGroup().addTo(map);
+        var grupKSN = L.layerGroup().addTo(map);
 
-        // 4. Panggil File GeoJSON ksn_dki_jakarta
+        // Variabel untuk menyimpan kota yang sedang dipilih
+        var kotaTerpilih = "SEMUA";
+
+        // ==========================================
+        // 3. MEMANGGIL DATA GEOJSON
+        // ==========================================
+
+        // A. Panggil Batas Kecamatan
+        fetch('batas_kec_dki_jakarta.geojson')
+            .then(res => res.json())
+            .then(data => {
+                layerKecamatanRaw = data; // simpan master data
+                renderLayers();
+            });
+
+        // B. Panggil Profil Risiko
+        fetch('profil_risk_dki_jakarta.geojson')
+            .then(res => res.json())
+            .then(data => {
+                layerRisikoRaw = data; // simpan master data
+                renderLayers();
+            });
+
+        // C. Panggil KSN DKI Jakarta
         fetch('ksn_dki_jakarta.geojson')
-            .then(function(response) {
-                return response.json();
-            })
-            .then(function(data) {
-                // Masukkan data GeoJSON ke peta
-                var geojsonLayer = L.geoJSON(data, {
-                    style: styleDefault, // Terapkan gaya standar hijau di awal
-                    
-                    onEachFeature: function (feature, layer) {
-                        
-                        // Perintah interaktif jika poligon diklik
-                        layer.on('click', function (e) {
-                            // Kembalikan poligon yang diklik sebelumnya ke warna hijau asal
-                            if (layerTerpilih) {
-                                geojsonLayer.resetStyle(layerTerpilih);
-                            }
+            .then(res => res.json())
+            .then(data => {
+                layerKSNRaw = data; // simpan master data
+                renderLayers();
+            });
 
-                            // Tandai poligon baru yang sedang diklik ini
-                            layerTerpilih = e.target;
 
-                            // Ubah poligon baru ini menjadi warna merah (styleTerpilih)
-                            layerTerpilih.setStyle(styleTerpilih);
+        // ==========================================
+        // 4. FUNGSI UNTUK MERENDER DAN MENYARING LAYER
+        // ==========================================
+        function renderLayers() {
+            // Bersihkan layer lama sebelum digambar ulang
+            grupKecamatan.clearLayers();
+            grupRisiko.clearLayers();
+            grupKSN.clearLayers();
 
-                            // Otomatis zoom pas ke area poligon yang diklik
-                            map.fitBounds(e.target.getBounds());
-                        });
-
-                        // Tampilkan Popup Informasi saat poligon diklik
-                        // Catatan: Ganti kata 'nama' di bawah ini dengan nama kolom asli di tabel SHP kamu (misal: 'Kecamatan' atau 'KAB_KOT')
-                        if (feature.properties && feature.properties.nama) {
-                            layer.bindPopup("<b>Wilayah:</b> " + feature.properties.nama);
+            // Render Kecamatan dengan Filter Kota
+            if (layerKecamatanRaw) {
+                L.geoJSON(layerKecamatanRaw, {
+                    style: styleKecamatan,
+                    filter: function(feature) {
+                        if (kotaTerpilih === "SEMUA") return true;
+                        return feature.properties.WADMKK && feature.properties.WADMKK.toUpperCase() === kotaTerpilih;
+                    },
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties && feature.properties.WADMKC) {
+                            layer.bindPopup("<b>Kecamatan:</b> " + feature.properties.WADMKC + "<br><b>Kota:</b> " + feature.properties.WADMKK);
                         }
                     }
-                }).addTo(map);
-                
-                // Otomatis atur zoom peta agar langsung pas menampilkan seluruh data poligon kita
-                map.fitBounds(geojsonLayer.getBounds());
-            })
-            .catch(function(error) {
-                console.log("Gagal memuat data GeoJSON:", error);
-            });
+                }).addTo(grupKecamatan);
+            }
+
+            // Render Profil Risiko dengan Filter Kota
+            if (layerRisikoRaw) {
+                L.geoJSON(layerRisikoRaw, {
+                    style: function(feature) {
+                        return {
+                            fillColor: dapatkanWarnaRisiko(feature.properties.Risiko),
+                            fillOpacity: 0.6,
+                            color: "#ffffff",
+                            weight: 0.5
+                        };
+                    },
+                    filter: function(feature) {
+                        if (kotaTerpilih === "SEMUA") return true;
+                        return feature.properties.WADMKK && feature.properties.WADMKK.toUpperCase() === kotaTerpilih;
+                    },
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties) {
+                            layer.bindPopup("<b>Kecamatan:</b> " + (feature.properties.WADMKC || "-") + "<br><b>Tingkat Risiko:</b> " + (feature.properties.Risiko || "-"));
+                        }
+                    }
+                }).addTo(grupRisiko);
+            }
+
+            // Render KSN (Sengaja tidak difilter kota karena skalanya nasional/lintas batas, tapi menyesuaikan)
+            if (layerKSNRaw) {
+                L.geoJSON(layerKSNRaw, {
+                    style: styleKSN,
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties && feature.properties.remarks) {
+                            layer.bindPopup("<b>Kawasan Strategis:</b><br>" + feature.properties.remarks);
+                        }
+                    }
+                }).addTo(grupKSN);
+            }
+        }
+
+        // Fungsi penanganan saat dropdown diganti oleh user
+        function filterPerKota(kota) {
+            kotaTerpilih = kota.toUpperCase();
+            renderLayers();
+
+            // Otomatis arahkan kamera zoom ke layer yang tersaring
+            setTimeout(function() {
+                var targetGrup = grupRisiko.getLayers().length > 0 ? grupRisiko : grupKecamatan;
+                if (targetGrup.getLayers().length > 0) {
+                    var bounds = L.featureGroup(targetGrup.getLayers()).getBounds();
+                    map.fitBounds(bounds);
+                } else if (kota === "SEMUA") {
+                    map.setView([-6.2088, 106.8456], 11);
+                }
+            }, 200);
+        }
+
+
+        // ==========================================
+        // 5. KONTROL LAYER & LEGENDA
+        // ==========================================
+        var pilihanBasemap = {
+            "OpenStreetMap": osm,
+            "Google Satellite": googleSatellite,
+            "Esri Gray": esriGray
+        };
+
+        var pilihanData = {
+            "Batas Kecamatan (WADMKC)": grupKecamatan,
+            "Profil Risiko (Risiko)": grupRisiko,
+            "Kawasan Strategis (KSN)": grupKSN
+        };
+
+        L.control.layers(pilihanBasemap, pilihanData, { collapsed: false }).addTo(map);
+
+        // Menambahkan Kotak Legenda Statis di Pojok Kanan Bawah
+        var legenda = L.control({ position: 'bottomright' });
+        legenda.onAdd = function (map) {
+            var div = L.DomUtil.create('div', 'legend');
+            div.innerHTML += '<h4>Legenda Risiko</h4>';
+            div.innerHTML += '<i style="background: #991414"></i> Risiko Sangat Tinggi<br>';
+            div.innerHTML += '<i style="background: #d95f02"></i> Risiko Tinggi<br>';
+            div.innerHTML += '<i style="background: #00ff00"></i> Risiko Sedang<br>';
+            div.innerHTML += '<i style="background: #1f1fff"></i> Risiko Rendah<br>';
+            return div;
+        };
+        legenda.addTo(map);
+
     </script>
 </body>
 </html>
