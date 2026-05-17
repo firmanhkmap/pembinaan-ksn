@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGIS Pembinaan KSN DKI Jakarta</title>
+    
+    <!-- Panggil CSS Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100%; height: 100vh; }
+    </style>
+</head>
+<body>
+
+    <!-- Wadah untuk Peta -->
+    <div id="map"></div>
+
+    <!-- Panggil Javascript Leaflet -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // 1. Inisialisasi Peta (Default fokus ke area Jakarta)
+        var map = L.map('map').setView([-6.2088, 106.8456], 11);
+
+        // 2. Tambahkan Basemap (OpenStreetMap)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        // 3. Atur Gaya (Style) Poligon
+        // Gaya standar awal poligon
+        var styleDefault = {
+            fillColor: "#2ca25f",   // Warna isi poligon (Hijau)
+            fillOpacity: 0.5,       // Transparansi isi poligon
+            color: "#ffffff",       // Warna garis tepi pembatas (Putih)
+            weight: 1.5,            // Ketebalan garis tepi
+            opacity: 1              // Transparansi garis tepi
+        };
+
+        // Gaya ketika poligon diklik/terpilih oleh user
+        var styleTerpilih = {
+            fillColor: "#ff3333",   // Berubah jadi Merah cerah saat diklik
+            fillOpacity: 0.7,       // Sedikit lebih pekat
+            color: "#000000",       // Garis tepi berubah jadi Hitam
+            weight: 2.5             // Garis tepi jadi lebih tebal
+        };
+
+        // Variabel penampung untuk menyimpan poligon mana yang sedang aktif diklik
+        var layerTerpilih;
+
+        // 4. Panggil File GeoJSON ksn_dki_jakarta
+        fetch('ksn_dki_jakarta.geojson')
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                // Masukkan data GeoJSON ke peta
+                var geojsonLayer = L.geoJSON(data, {
+                    style: styleDefault, // Terapkan gaya standar hijau di awal
+                    
+                    onEachFeature: function (feature, layer) {
+                        
+                        // Perintah interaktif jika poligon diklik
+                        layer.on('click', function (e) {
+                            // Kembalikan poligon yang diklik sebelumnya ke warna hijau asal
+                            if (layerTerpilih) {
+                                geojsonLayer.resetStyle(layerTerpilih);
+                            }
+
+                            // Tandai poligon baru yang sedang diklik ini
+                            layerTerpilih = e.target;
+
+                            // Ubah poligon baru ini menjadi warna merah (styleTerpilih)
+                            layerTerpilih.setStyle(styleTerpilih);
+
+                            // Otomatis zoom pas ke area poligon yang diklik
+                            map.fitBounds(e.target.getBounds());
+                        });
+
+                        // Tampilkan Popup Informasi saat poligon diklik
+                        // Catatan: Ganti kata 'nama' di bawah ini dengan nama kolom asli di tabel SHP kamu (misal: 'Kecamatan' atau 'KAB_KOT')
+                        if (feature.properties && feature.properties.nama) {
+                            layer.bindPopup("<b>Wilayah:</b> " + feature.properties.nama);
+                        }
+                    }
+                }).addTo(map);
+                
+                // Otomatis atur zoom peta agar langsung pas menampilkan seluruh data poligon kita
+                map.fitBounds(geojsonLayer.getBounds());
+            })
+            .catch(function(error) {
+                console.log("Gagal memuat data GeoJSON:", error);
+            });
+    </script>
+</body>
+</html>
